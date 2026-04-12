@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频字幕擦除原型</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%230f172a'/%3E%3Cpath d='M12 15h24v4H12zm4-5h16a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H16a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4Z' fill='none' stroke='%23fff' stroke-width='2.8'/%3E%3Cpath d='M17 27h14M17 33h9' stroke='%23fff' stroke-width='2.8' stroke-linecap='round'/%3E%3C/svg%3E">
+    <style>
+        :root {
+            --ink: #0f172a;
+            --line: rgba(15, 23, 42, 0.1);
+            --brand: #2563eb;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "Noto Sans SC", sans-serif;
+            background:
+                radial-gradient(circle at top, rgba(59, 130, 246, 0.12), transparent 28%),
+                linear-gradient(180deg, #f8fbff 0%, #f8fafc 38%, #f8fafc 100%);
+            color: var(--ink);
+        }
+        .display-font { font-family: "Manrope", "Noto Sans SC", sans-serif; }
+        .glass-card {
+            backdrop-filter: blur(16px);
+            background: rgba(255, 255, 255, 0.88);
+            box-shadow: 0 26px 90px rgba(15, 23, 42, 0.08);
+        }
+        .grid-noise {
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+        .drop-zone.dragover { border-color: var(--brand); background: rgba(37, 99, 235, 0.06); }
+        .player-shell,
+        .annotation-shell {
+            position: relative;
+            overflow: hidden;
+            border-radius: 24px;
+            background: #020617;
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+        }
+        .player-shell video {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 620px;
+            margin: 0 auto;
+            background: #020617;
+        }
+        .annotation-shell {
+            min-height: 420px;
+        }
+        .annotation-shell canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+            min-height: 360px;
+            background: #020617;
+        }
+        .draw-layer {
+            position: absolute;
+            inset: 0;
+            cursor: crosshair;
+        }
+        .region-box {
+            position: absolute;
+            border: 2px solid #22c55e;
+            background: rgba(34, 197, 94, 0.14);
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) inset;
+        }
+        .draft-box {
+            position: absolute;
+            border: 2px dashed #f59e0b;
+            background: rgba(245, 158, 11, 0.18);
+        }
+        .progress-bar { transition: width 0.35s ease; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div id="app">
+        <header class="sticky top-0 z-50 border-b border-slate-200/80 bg-white/88 backdrop-blur-xl">
+            <div class="mx-auto flex max-w-[1680px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+                <div class="flex items-center gap-4">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-950/15">
+                        <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 7h16M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 14h8m-8 3h5"></path>
+                        </svg>
+                    </div>
+                    <div>
+                        <p class="display-font text-xl font-extrabold tracking-tight text-slate-950">视频字幕擦除原型</p>
+                        <p class="text-sm text-slate-500">播放器只负责定位时间，标注板专门负责框选字幕带</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 text-sm">
+                    <span class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5"
+                          :class="serverOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'">
+                        <span class="h-2.5 w-2.5 rounded-full"
+                              :class="serverOnline ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+                        {{ serverOnline ? '服务在线' : '服务离线' }}
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <main class="mx-auto max-w-[1680px] px-4 py-8 sm:px-6 lg:px-8">
+            <section class="glass-card rounded-[32px] border border-white/80 p-6 shadow-[0_28px_90px_rgba(15,23,42,0.08)]">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                        <p class="display-font text-2xl font-extrabold tracking-tight text-slate-950">工作台</p>
+                        <p class="mt-1 text-sm text-slate-500">先在播放器里定位到字幕出现的帧，再在下面的独立标注板上框选。两者完全分离，所以不会再挡住进度条。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
+                            当前文件：{{ selectedFileName || '未选择' }}
+                        </span>
+                        <span class="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
+                            {{ formatTime(currentTime) }} / {{ formatTime(duration) }}
+                        </span>
+                    </div>
+                </div>
+
+                <div class="mt-6 grid gap-6">
+                    <div class="rounded-[28px] border border-slate-200 bg-white p-5">
+                        <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                            <div>
+                                <p class="display-font text-lg font-bold text-slate-950">时间定位播放器</p>
+                                <p class="mt-1 text-sm text-slate-500">这里专门用来播放、暂停、拖动时间轴。不会有任何框选层压在上面。</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button @click="seekPreview(-2)" type="button" :disabled="!previewUrl"
+                                        class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+                                    回退 2 秒
+                                </button>
+                                <button @click="togglePreviewPlayback" type="button" :disabled="!previewUrl"
+                                        class="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+                                    {{ isVideoPlaying ? '暂停预览' : '播放预览' }}
+                                </button>
+                                <button @click="seekPreview(2)" type="button" :disabled="!previewUrl"
+                                        class="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+                                    前进 2 秒
+                                </button>
+                                <button @click="captureCurrentFrame" type="button" :disabled="!previewUrl"
+                                        class="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">
+                                    同步当前帧到标注板
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mt-5 player-shell">
+                            <video ref="previewVideo"
+                                   :src="previewUrl"
+                                   controls
+                                   preload="metadata"
+                                   @loadedmetadata="syncVideoMetrics"
+                                   @loadeddata="captureCurrentFrame"
+                                   @timeupdate="syncPlaybackState"
+                                   @seeked="handlePreviewSeeked"
+                                   @play="isVideoPlaying = true"
+                                   @pause="handlePreviewPause"></video>
+                            <div v-if="!previewUrl" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/92 text-center text-slate-300">
+                                <div class="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm">
+                                    先在下方上传 MP4，播放器会在这里以更大的尺寸出现
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rounded-[28px] border border-slate-200 bg-white p-5">
+                        <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                            <div>
+                                <p class="display-font text-lg font-bold text-slate-950">标注板</p>
+                                <p class="mt-1 text-sm text-slate-500">暂停或拖动时间轴后，当前帧会同步到这里。你在这里框选，不会影响播放器 controls。</p>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
+                                    标注帧：{{ formatTime(capturedFrameTime) }}
+                                </span>
+                                <button @click="clearRegions" type="button"
+                                        class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-950">
+                                    清空区域
+                                </button>
+                                <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
+                                    {{ regions.length }}/3 区域
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 flex flex-wrap gap-2 text-xs">
+                            <span class="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">1. 播放器里定位字幕出现时刻</span>
+                            <span class="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">2. 暂停或拖动时间轴</span>
+                            <span class="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">3. 当前帧自动同步到下方</span>
+                            <span class="rounded-full bg-slate-100 px-3 py-1.5 text-slate-600">4. 在标注板上拖拽字幕带</span>
+                        </div>
+
+                        <div class="mt-5 annotation-shell">
+                            <canvas v-show="selectionReady" ref="selectionCanvas"></canvas>
+                            <div v-if="selectionReady"
+                                 ref="drawLayer"
+                                 class="draw-layer"
+                                 @mousedown="beginDraw"
+                                 @mousemove="moveDraw"
+                                 @mouseup="finishDraw"
+                                 @mouseleave="finishDraw">
+                                <div v-for="(region, index) in regions"
+                                     :key="`region-${index}`"
+                                     class="region-box"
+                                     :style="regionStyle(region)">
+                                </div>
+                                <div v-if="draftRegion" class="draft-box" :style="regionStyle(draftRegion)"></div>
+                            </div>
+                            <div v-if="!previewUrl" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/92 text-center text-slate-300">
+                                <div class="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm">
+                                    上传视频后，这里会显示当前时间点对应的静态标注板
+                                </div>
+                            </div>
+                            <div v-else-if="!selectionReady" class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950/92 text-center text-slate-300">
+                                <div class="rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-sm">
+                                    暂停或拖动播放器后，会自动抓取当前帧到这里
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                            标注板是静态帧，尺寸比之前更大，适合精确圈出底部字幕带。播放器和标注板分离后，拖时间轴、调音量、全屏都不会再被拦住。
+                        </div>
+
+                        <div class="mt-4 grid gap-3 md:grid-cols-3">
+                            <div v-for="(region, index) in regions"
+                                 :key="`tag-${index}`"
+                                 class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                                <div class="flex items-center justify-between gap-3">
+                                    <span class="font-medium text-slate-800">区域 {{ index + 1 }}</span>
+                                    <button @click="removeRegion(index)" type="button" class="text-slate-400 transition hover:text-rose-500">删除</button>
+                                </div>
+                                <p class="mt-2 text-xs text-slate-500">x={{ region.x.toFixed(3) }}, y={{ region.y.toFixed(3) }}, w={{ region.width.toFixed(3) }}, h={{ region.height.toFixed(3) }}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                <section class="glass-card grid-noise rounded-[28px] border border-white/70 p-6">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <p class="display-font text-lg font-bold text-slate-950">输入与参数</p>
+                            <p class="mt-1 text-sm text-slate-500">上传 MP4 后，再决定走自动、半自动或固定 ROI 模式。</p>
+                        </div>
+                        <button @click="resetAll" type="button" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-950">
+                            重置
+                        </button>
+                    </div>
+
+                    <div class="mt-5 space-y-5">
+                        <div class="drop-zone rounded-3xl border-2 border-dashed border-slate-300 bg-white/80 p-6 text-center transition"
+                             :class="{ dragover: isDragging }"
+                             @dragover.prevent="isDragging = true"
+                             @dragleave.prevent="isDragging = false"
+                             @drop.prevent="handleDrop"
+                             @click="$refs.fileInput.click()">
+                            <input ref="fileInput" type="file" accept=".mp4,video/mp4" class="hidden" @change="handleFileChange">
+                            <div class="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                                <svg class="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 16V4m0 0-4 4m4-4 4 4M5 20h14"></path>
+                                </svg>
+                            </div>
+                            <p class="mt-4 text-base font-medium text-slate-700">拖拽视频到这里，或点击选择 MP4</p>
+                            <p class="mt-1 text-sm text-slate-400">当前只支持本地 MP4，完整处理走服务端异步任务。</p>
+                            <div v-if="selectedFileName" class="mt-4 inline-flex rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-600">
+                                {{ selectedFileName }}
+                            </div>
+                        </div>
+
+                        <div class="rounded-3xl border border-slate-200 bg-white p-4">
+                            <p class="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">模式</p>
+                            <div class="grid gap-3 md:grid-cols-3">
+                                <button v-for="item in modeOptions"
+                                        :key="item.value"
+                                        @click="options.mode = item.value"
+                                        type="button"
+                                        class="rounded-2xl border px-4 py-4 text-left transition"
+                                        :class="options.mode === item.value ? 'border-blue-400 bg-blue-50 shadow-sm shadow-blue-200/50' : 'border-slate-200 bg-slate-50 hover:border-slate-300'">
+                                    <p class="display-font text-sm font-bold text-slate-900">{{ item.label }}</p>
+                                    <p class="mt-1 text-xs leading-5 text-slate-500">{{ item.description }}</p>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <label class="rounded-2xl border border-slate-200 bg-white p-4">
+                                <span class="mb-2 block text-sm font-medium text-slate-700">采样间隔（秒）</span>
+                                <input v-model.number="options.sampleInterval" type="number" min="0.1" max="3" step="0.05"
+                                       class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                            </label>
+                            <label class="rounded-2xl border border-slate-200 bg-white p-4">
+                                <span class="mb-2 block text-sm font-medium text-slate-700">字幕位置先验</span>
+                                <select v-model="options.positionMode"
+                                        class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                    <option value="auto">自动</option>
+                                    <option value="bottom">底部</option>
+                                    <option value="middle">中部</option>
+                                    <option value="top">顶部</option>
+                                </select>
+                            </label>
+                            <label class="rounded-2xl border border-slate-200 bg-white p-4">
+                                <span class="mb-2 block text-sm font-medium text-slate-700">Mask 横向扩张</span>
+                                <input v-model.number="options.maskDilateX" type="number" min="4" max="40" step="1"
+                                       class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                            </label>
+                            <label class="rounded-2xl border border-slate-200 bg-white p-4">
+                                <span class="mb-2 block text-sm font-medium text-slate-700">Mask 纵向扩张</span>
+                                <input v-model.number="options.maskDilateY" type="number" min="4" max="30" step="1"
+                                       class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                            </label>
+                        </div>
+
+                        <details class="rounded-3xl border border-slate-200 bg-white p-4">
+                            <summary class="cursor-pointer list-none text-sm font-semibold text-slate-800">高级参数</summary>
+                            <div class="mt-4 grid gap-4 md:grid-cols-2">
+                                <label>
+                                    <span class="mb-2 block text-sm font-medium text-slate-700">底部搜索带比例</span>
+                                    <input v-model.number="options.roiBottomRatio" type="number" min="0.15" max="0.6" step="0.01"
+                                           class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                </label>
+                                <label>
+                                    <span class="mb-2 block text-sm font-medium text-slate-700">段间合并帧数</span>
+                                    <input v-model.number="options.segmentGapFrames" type="number" min="0" max="20" step="1"
+                                           class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                </label>
+                                <label>
+                                    <span class="mb-2 block text-sm font-medium text-slate-700">前向扩张帧数</span>
+                                    <input v-model.number="options.eventLeadFrames" type="number" min="0" max="20" step="1"
+                                           class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                </label>
+                                <label>
+                                    <span class="mb-2 block text-sm font-medium text-slate-700">后向扩张帧数</span>
+                                    <input v-model.number="options.eventTrailFrames" type="number" min="0" max="30" step="1"
+                                           class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                                </label>
+                            </div>
+                        </details>
+
+                        <div class="rounded-3xl border border-slate-200 bg-slate-950 p-5 text-white">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <p class="display-font text-base font-bold">启动完整擦除任务</p>
+                                    <p class="mt-1 text-sm text-slate-300">`manual-fixed` 模式下至少要框一个区域，推荐直接在标注板里圈底部字幕带。</p>
+                                </div>
+                                <button @click="submitTask"
+                                        type="button"
+                                        :disabled="isSubmitting || !selectedFile"
+                                        class="inline-flex items-center justify-center rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50">
+                                    {{ isSubmitting ? '提交中...' : '开始处理' }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="glass-card rounded-[28px] border border-white/70 p-6">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <p class="display-font text-lg font-bold text-slate-950">任务状态</p>
+                            <p class="mt-1 text-sm text-slate-500">提交后自动轮询。处理完成会直接给出输出视频和调试文件。</p>
+                        </div>
+                        <span class="rounded-full px-3 py-1.5 text-xs font-semibold"
+                              :class="statusBadgeClass(task.status)">
+                            {{ statusLabel(task.status) }}
+                        </span>
+                    </div>
+
+                    <div class="mt-5 rounded-3xl border border-slate-200 bg-white p-5">
+                        <div class="flex items-center justify-between gap-4">
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">{{ task.message || '等待任务' }}</p>
+                                <p class="mt-1 text-xs uppercase tracking-[0.2em] text-slate-400">{{ task.stage || 'idle' }}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="display-font text-2xl font-extrabold text-slate-950">{{ task.progress || 0 }}%</p>
+                            </div>
+                        </div>
+                        <div class="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
+                            <div class="progress-bar h-full rounded-full bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-500" :style="{ width: `${task.progress || 0}%` }"></div>
+                        </div>
+                        <p v-if="task.error" class="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                            {{ task.error }}
+                        </p>
+                    </div>
+
+                    <div v-if="resultUrl" class="mt-5 grid gap-5">
+                        <div class="rounded-3xl border border-slate-200 bg-white p-4">
+                            <div class="flex items-center justify-between gap-3">
+                                <p class="display-font text-base font-bold text-slate-900">擦除结果</p>
+                                <a :href="resultUrl" class="text-sm font-medium text-blue-600 hover:text-blue-800">下载结果</a>
+                            </div>
+                            <video class="mt-4 w-full rounded-2xl bg-slate-950" controls :src="resultUrl"></video>
+                        </div>
+                        <div class="rounded-3xl border border-slate-200 bg-white p-4">
+                            <div class="flex items-center justify-between gap-3">
+                                <p class="display-font text-base font-bold text-slate-900">调试输出</p>
+                                <a v-if="task.debug_url" :href="task.debug_url" class="text-sm font-medium text-blue-600 hover:text-blue-800">下载 detection.json</a>
+                            </div>
+                            <div class="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-600">
+                                <p>模式：{{ options.mode }}</p>
+                                <p>采样间隔：{{ options.sampleInterval }}s</p>
+                                <p>ROI 区域数：{{ regions.length }}</p>
+                                <p>如果某些镜头仍有残字，先看 detection.json 的时间段，再决定是否继续扩大前后扩张帧数。</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    serverOnline: false,
+                    isDragging: false,
+                    isSubmitting: false,
+                    isVideoPlaying: false,
+                    selectedFile: null,
+                    selectedFileName: "",
+                    previewUrl: "",
+                    currentTime: 0,
+                    duration: 0,
+                    selectionReady: false,
+                    capturedFrameTime: 0,
+                    drawStart: null,
+                    draftRegion: null,
+                    pollTimer: null,
+                    task: { status: "idle", progress: 0, stage: "idle", message: "尚未提交任务" },
+                    resultUrl: "",
+                    regions: [],
+                    modeOptions: [
+                        { value: "auto", label: "自动模式", description: "自动找时间段和字幕框，适合先跑一版基线。" },
+                        { value: "semi-auto", label: "半自动", description: "时间仍自动判断，但空间上只信你框出的字幕带。" },
+                        { value: "manual-fixed", label: "固定 ROI", description: "对选中区域逐帧提取字幕 mask，最适合固定底部字幕。" },
+                    ],
+                    options: {
+                        mode: "auto",
+                        language: "ch",
+                        sampleInterval: 0.25,
+                        positionMode: "bottom",
+                        roiBottomRatio: 0.34,
+                        maskDilateX: 14,
+                        maskDilateY: 10,
+                        segmentGapFrames: 3,
+                        contextFrames: 12,
+                        eventLeadFrames: 2,
+                        eventTrailFrames: 8,
+                    },
+                };
+            },
+            mounted() {
+                this.checkHealth();
+                this.fetchConfig();
+            },
+            beforeUnmount() {
+                if (this.pollTimer) {
+                    window.clearInterval(this.pollTimer);
+                }
+                if (this.previewUrl) {
+                    URL.revokeObjectURL(this.previewUrl);
+                }
+            },
+            methods: {
+                async checkHealth() {
+                    try {
+                        const response = await fetch("/health");
+                        this.serverOnline = response.ok;
+                    } catch (error) {
+                        this.serverOnline = false;
+                    }
+                },
+                async fetchConfig() {
+                    try {
+                        const response = await fetch("/api/v1/erase/upload/config");
+                        if (!response.ok) return;
+                        const payload = await response.json();
+                        Object.assign(this.options, payload.defaults || {});
+                    } catch (error) {
+                        console.warn(error);
+                    }
+                },
+                resetAll() {
+                    this.clearRegions();
+                    if (this.previewUrl) {
+                        URL.revokeObjectURL(this.previewUrl);
+                    }
+                    this.selectedFile = null;
+                    this.selectedFileName = "";
+                    this.previewUrl = "";
+                    this.isVideoPlaying = false;
+                    this.currentTime = 0;
+                    this.duration = 0;
+                    this.selectionReady = false;
+                    this.capturedFrameTime = 0;
+                    this.task = { status: "idle", progress: 0, stage: "idle", message: "尚未提交任务" };
+                    this.resultUrl = "";
+                    this.options = {
+                        mode: "auto",
+                        language: "ch",
+                        sampleInterval: 0.25,
+                        positionMode: "bottom",
+                        roiBottomRatio: 0.34,
+                        maskDilateX: 14,
+                        maskDilateY: 10,
+                        segmentGapFrames: 3,
+                        contextFrames: 12,
+                        eventLeadFrames: 2,
+                        eventTrailFrames: 8,
+                    };
+                },
+                handleDrop(event) {
+                    this.isDragging = false;
+                    const [file] = event.dataTransfer.files || [];
+                    if (file) this.setSelectedFile(file);
+                },
+                handleFileChange(event) {
+                    const [file] = event.target.files || [];
+                    if (file) this.setSelectedFile(file);
+                },
+                setSelectedFile(file) {
+                    if (!file.name.toLowerCase().endsWith(".mp4")) {
+                        window.alert("当前只支持 MP4");
+                        return;
+                    }
+                    if (this.previewUrl) {
+                        URL.revokeObjectURL(this.previewUrl);
+                    }
+                    this.clearRegions();
+                    this.selectedFile = file;
+                    this.selectedFileName = file.name;
+                    this.previewUrl = URL.createObjectURL(file);
+                    this.isVideoPlaying = false;
+                    this.currentTime = 0;
+                    this.duration = 0;
+                    this.selectionReady = false;
+                    this.capturedFrameTime = 0;
+                    this.resultUrl = "";
+                    this.task = { status: "idle", progress: 0, stage: "idle", message: "视频已载入，准备提交" };
+                },
+                syncVideoMetrics() {
+                    const video = this.$refs.previewVideo;
+                    if (!video) return;
+                    this.duration = Number.isFinite(video.duration) ? video.duration : 0;
+                    this.currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+                },
+                syncPlaybackState() {
+                    const video = this.$refs.previewVideo;
+                    if (!video) return;
+                    this.currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+                    this.duration = Number.isFinite(video.duration) ? video.duration : this.duration;
+                },
+                handlePreviewSeeked() {
+                    this.syncPlaybackState();
+                    this.captureCurrentFrame();
+                },
+                handlePreviewPause() {
+                    this.isVideoPlaying = false;
+                    this.syncPlaybackState();
+                    this.captureCurrentFrame();
+                },
+                togglePreviewPlayback() {
+                    const video = this.$refs.previewVideo;
+                    if (!video) return;
+                    if (video.paused) {
+                        video.play();
+                    } else {
+                        video.pause();
+                    }
+                },
+                seekPreview(deltaSeconds) {
+                    const video = this.$refs.previewVideo;
+                    if (!video) return;
+                    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+                    const nextTime = Math.max(0, Math.min(duration, video.currentTime + deltaSeconds));
+                    video.currentTime = nextTime;
+                    this.syncPlaybackState();
+                },
+                captureCurrentFrame() {
+                    const video = this.$refs.previewVideo;
+                    const canvas = this.$refs.selectionCanvas;
+                    if (!video || !canvas) return;
+                    if (!video.videoWidth || !video.videoHeight) return;
+
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext("2d");
+                    if (!ctx) return;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    this.selectionReady = true;
+                    this.capturedFrameTime = video.currentTime || 0;
+                    this.syncPlaybackState();
+                },
+                beginDraw(event) {
+                    if (!this.selectionReady || this.regions.length >= 3) return;
+                    const rect = this.$refs.drawLayer.getBoundingClientRect();
+                    this.drawStart = {
+                        x: (event.clientX - rect.left) / rect.width,
+                        y: (event.clientY - rect.top) / rect.height,
+                    };
+                },
+                moveDraw(event) {
+                    if (!this.drawStart) return;
+                    const rect = this.$refs.drawLayer.getBoundingClientRect();
+                    const current = {
+                        x: (event.clientX - rect.left) / rect.width,
+                        y: (event.clientY - rect.top) / rect.height,
+                    };
+                    this.draftRegion = this.normalizeRegion(this.drawStart, current);
+                },
+                finishDraw(event) {
+                    if (!this.drawStart) return;
+                    const rect = this.$refs.drawLayer.getBoundingClientRect();
+                    const current = {
+                        x: (event.clientX - rect.left) / rect.width,
+                        y: (event.clientY - rect.top) / rect.height,
+                    };
+                    const region = this.normalizeRegion(this.drawStart, current);
+                    if (region.width > 0.02 && region.height > 0.02 && this.regions.length < 3) {
+                        this.regions.push(region);
+                    }
+                    this.drawStart = null;
+                    this.draftRegion = null;
+                },
+                normalizeRegion(start, end) {
+                    const x1 = Math.max(0, Math.min(1, Math.min(start.x, end.x)));
+                    const y1 = Math.max(0, Math.min(1, Math.min(start.y, end.y)));
+                    const x2 = Math.max(0, Math.min(1, Math.max(start.x, end.x)));
+                    const y2 = Math.max(0, Math.min(1, Math.max(start.y, end.y)));
+                    return {
+                        x: x1,
+                        y: y1,
+                        width: Math.max(0, x2 - x1),
+                        height: Math.max(0, y2 - y1),
+                    };
+                },
+                regionStyle(region) {
+                    return {
+                        left: `${region.x * 100}%`,
+                        top: `${region.y * 100}%`,
+                        width: `${region.width * 100}%`,
+                        height: `${region.height * 100}%`,
+                    };
+                },
+                clearRegions() {
+                    this.regions = [];
+                    this.drawStart = null;
+                    this.draftRegion = null;
+                },
+                removeRegion(index) {
+                    this.regions.splice(index, 1);
+                },
+                formatTime(seconds) {
+                    if (!Number.isFinite(seconds) || seconds <= 0) return "00:00";
+                    const total = Math.floor(seconds);
+                    const mins = Math.floor(total / 60);
+                    const secs = total % 60;
+                    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+                },
+                statusBadgeClass(status) {
+                    if (status === "completed") return "bg-emerald-50 text-emerald-700";
+                    if (status === "failed") return "bg-rose-50 text-rose-700";
+                    if (status === "running") return "bg-blue-50 text-blue-700";
+                    if (status === "queued") return "bg-amber-50 text-amber-700";
+                    return "bg-slate-100 text-slate-500";
+                },
+                statusLabel(status) {
+                    if (status === "completed") return "已完成";
+                    if (status === "failed") return "失败";
+                    if (status === "running") return "处理中";
+                    if (status === "queued") return "队列中";
+                    return "未开始";
+                },
+                async submitTask() {
+                    if (!this.selectedFile) {
+                        window.alert("请先选择视频");
+                        return;
+                    }
+                    if (this.options.mode === "manual-fixed" && !this.regions.length) {
+                        window.alert("固定 ROI 模式至少需要框一个区域");
+                        return;
+                    }
+
+                    this.isSubmitting = true;
+                    this.resultUrl = "";
+                    const formData = new FormData();
+                    formData.append("file", this.selectedFile);
+                    formData.append("mode", this.options.mode);
+                    formData.append("language", this.options.language);
+                    formData.append("sample_interval", String(this.options.sampleInterval));
+                    formData.append("position_mode", String(this.options.positionMode));
+                    formData.append("roi_bottom_ratio", String(this.options.roiBottomRatio));
+                    formData.append("mask_dilate_x", String(this.options.maskDilateX));
+                    formData.append("mask_dilate_y", String(this.options.maskDilateY));
+                    formData.append("segment_gap_frames", String(this.options.segmentGapFrames));
+                    formData.append("context_frames", String(this.options.contextFrames));
+                    formData.append("event_lead_frames", String(this.options.eventLeadFrames));
+                    formData.append("event_trail_frames", String(this.options.eventTrailFrames));
+                    formData.append("regions", JSON.stringify(this.regions));
+
+                    try {
+                        const response = await fetch("/api/v1/erase/extract/async", {
+                            method: "POST",
+                            body: formData,
+                        });
+                        const payload = await response.json();
+                        if (!response.ok) {
+                            throw new Error(payload.detail || "提交失败");
+                        }
+                        this.task = payload;
+                        this.startPolling();
+                    } catch (error) {
+                        window.alert(error.message || "提交失败");
+                    } finally {
+                        this.isSubmitting = false;
+                    }
+                },
+                startPolling() {
+                    if (!this.task.task_id) return;
+                    if (this.pollTimer) {
+                        window.clearInterval(this.pollTimer);
+                    }
+                    this.fetchTaskStatus();
+                    this.pollTimer = window.setInterval(this.fetchTaskStatus, 1500);
+                },
+                async fetchTaskStatus() {
+                    if (!this.task.task_id) return;
+                    try {
+                        const response = await fetch(`/api/v1/erase/status/${this.task.task_id}`);
+                        if (!response.ok) return;
+                        this.task = await response.json();
+                        if (this.task.status === "completed") {
+                            this.resultUrl = `${this.task.result_url}?t=${Date.now()}`;
+                            window.clearInterval(this.pollTimer);
+                            this.pollTimer = null;
+                        }
+                        if (this.task.status === "failed") {
+                            window.clearInterval(this.pollTimer);
+                            this.pollTimer = null;
+                        }
+                    } catch (error) {
+                        console.warn(error);
+                    }
+                },
+            },
+        }).mount("#app");
+    </script>
+</body>
+</html>

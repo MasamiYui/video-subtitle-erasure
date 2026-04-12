@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.playwright-cli/
+output/
+runtime/
+tmp_assets/
+tmp_samples/
+*.video_only.mp4
+*.egg-info/
+test_video/

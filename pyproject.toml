@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-subtitle-erasure"
+version = "0.1.0"
+description = "Local MP4 subtitle erasure pipeline with OCR-based subtitle localization and OpenCV inpainting"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "numpy==2.4.4",
+    "opencv-contrib-python==4.10.0.84",
+    "tqdm>=4.66,<5",
+    "paddlepaddle==3.1.1",
+    "paddleocr==3.2.0",
+    "paddlex==3.2.0",
+    "python-multipart>=0.0.9,<1",
+    "uvicorn>=0.30,<1",
+]
+
+[project.scripts]
+subtitle-erase = "subtitle_eraser.cli:main"
+subtitle-erase-web = "main:main"
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8.3,<9",
+]
+
+[tool.setuptools.packages.find]
+include = ["subtitle_eraser*"]
+
+[tool.setuptools.package-data]
+subtitle_eraser = ["static/index.html"]
