@@ -12,12 +12,23 @@ Hard subtitle removal for local MP4 videos, with an OCR-assisted CLI pipeline an
 
 ### Sample Comparison | 示例对比
 
-The comparison screenshots below were generated from `哪吒预告片.mp4` and show before/after subtitle removal on two frames.
+The comparison screenshots below were generated from a local clip of `哪吒预告片.mp4`.
+Each image is labeled: left is the original frame with hard subtitles, right is the processed frame after subtitle removal.
 
-下面两组对比图使用 `哪吒预告片.mp4` 生成，展示了两帧字幕擦除前后的效果。
+下面两组对比图使用本地 `哪吒预告片.mp4` 片段生成。
+每张图都已标注：左侧是带硬字幕的原始帧，右侧是擦除后的处理结果。
 
-![Comparison 1](./docs/images/nezha-compare-026.jpg)
-![Comparison 2](./docs/images/nezha-compare-078.jpg)
+Frame A at about `1.6s` (`虽扛下了天劫`)
+
+帧 A，约 `1.6s`（`虽扛下了天劫`）
+
+![Comparison 1](./docs/images/nezha-compare-01.jpg)
+
+Frame B at about `12.6s` (`海面出现敌情`)
+
+帧 B，约 `12.6s`（`海面出现敌情`）
+
+![Comparison 2](./docs/images/nezha-compare-02.jpg)
 
 ## 中文说明
 
@@ -53,8 +64,7 @@ pip install -e .[dev]
 如果你已经有 `subtitle-ocr` 的可用环境，也可以直接在那套环境里安装当前项目：
 
 ```bash
-cd /Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m pip install -e .[dev]
+../subtitle-ocr/.venv/bin/python -m pip install -e .[dev]
 ```
 
 ### 依赖 `subtitle-ocr`
@@ -71,11 +81,11 @@ cd /Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure
 
 ```bash
 subtitle-erase \
-  --input "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/test_video/我在迪拜等你.mp4" \
-  --output "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/output/demo_no_sub.mp4" \
+  --input ./input/demo.mp4 \
+  --output ./output/demo_no_sub.mp4 \
   --sample-interval 0.25 \
-  --subtitle-ocr-project "/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr" \
-  --debug-dir "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/output/debug"
+  --subtitle-ocr-project ../subtitle-ocr \
+  --debug-dir ./output/debug
 ```
 
 常用参数：
@@ -99,8 +109,8 @@ subtitle-erase \
 启动方式：
 
 ```bash
-PYTHONPATH="/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr:/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure" \
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+export SUBTITLE_OCR_PROJECT=../subtitle-ocr
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 然后打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
@@ -110,8 +120,8 @@ PYTHONPATH="/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr:/Users/masamiy
 单元测试和 API 测试：
 
 ```bash
-PYTHONPATH="/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr:$PWD" \
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m pytest -q
+PYTHONPATH="../subtitle-ocr:$PWD" \
+../subtitle-ocr/.venv/bin/python -m pytest -q
 ```
 
 当前测试覆盖了：
@@ -164,8 +174,7 @@ pip install -e .[dev]
 If you already have a working `subtitle-ocr` environment, you can install this project into that environment instead:
 
 ```bash
-cd /Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m pip install -e .[dev]
+../subtitle-ocr/.venv/bin/python -m pip install -e .[dev]
 ```
 
 ### `subtitle-ocr` Dependency
@@ -182,11 +191,11 @@ Run the pipeline on a short clip first:
 
 ```bash
 subtitle-erase \
-  --input "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/test_video/我在迪拜等你.mp4" \
-  --output "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/output/demo_no_sub.mp4" \
+  --input ./input/demo.mp4 \
+  --output ./output/demo_no_sub.mp4 \
   --sample-interval 0.25 \
-  --subtitle-ocr-project "/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr" \
-  --debug-dir "/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure/output/debug"
+  --subtitle-ocr-project ../subtitle-ocr \
+  --debug-dir ./output/debug
 ```
 
 Useful flags:
@@ -210,8 +219,8 @@ The repository includes a fast browser workbench inspired by `subtitle-ocr/stati
 Run it with:
 
 ```bash
-PYTHONPATH="/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr:/Users/masamiyui/OpenSoureProjects/Forks/video-subtitle-erasure" \
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+export SUBTITLE_OCR_PROJECT=../subtitle-ocr
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
@@ -221,8 +230,8 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 Run the test suite with:
 
 ```bash
-PYTHONPATH="/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr:$PWD" \
-/Users/masamiyui/OpenSoureProjects/Forks/subtitle-ocr/.venv/bin/python -m pytest -q
+PYTHONPATH="../subtitle-ocr:$PWD" \
+../subtitle-ocr/.venv/bin/python -m pytest -q
 ```
 
 Current tests cover:
