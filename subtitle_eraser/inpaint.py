@@ -10,6 +10,7 @@ from subtitle_eraser.masking import extract_text_mask, mask_bbox
 
 @dataclass(slots=True)
 class InpaintConfig:
+    """Controls how masked subtitle pixels are reconstructed."""
     backend: str = "telea"
     spatial_radius: int = 3
     context_margin: int = 80
@@ -49,6 +50,8 @@ class HybridTemporalInpainter:
             filled_roi = frame_roi.copy()
             temporal_valid = np.zeros(mask_roi.shape, dtype=bool)
             if self.config.backend == "flow-guided":
+                # Try to copy clean pixels from nearby frames first. Spatial inpainting remains
+                # as a fallback for positions where temporal references are unreliable.
                 temporal_fill, temporal_valid = self._temporal_fill_roi(frames, masks, target_idx, roi)
                 if temporal_fill is not None and temporal_valid.any():
                     filled_roi[temporal_valid] = temporal_fill[temporal_valid]
@@ -122,6 +125,8 @@ class HybridTemporalInpainter:
             valid = (target_mask > 0) & (warped_ref_mask == 0)
             if not np.any(valid):
                 continue
+            # Collect both the mean and variance of candidate pixels so we can reject temporal
+            # fills that disagree too much across neighboring frames.
             warped_ref_f32 = warped_ref.astype(np.float32)
             accum[valid] += warped_ref_f32[valid]
             accum_sq[valid] += warped_ref_f32[valid] ** 2
@@ -135,6 +140,7 @@ class HybridTemporalInpainter:
         mean = accum / count_safe
         variance = np.maximum(accum_sq / count_safe - mean**2, 0.0)
         temporal_std = np.sqrt(np.mean(variance, axis=2))
+        # Only trust temporal fill where enough references agree and the pixel variance stays low.
         valid = (vote_count >= float(min_consensus)) & (temporal_std <= float(self.config.temporal_max_std))
         if not np.any(valid):
             return None, valid
@@ -149,6 +155,7 @@ class HybridTemporalInpainter:
         reference_roi: np.ndarray,
         reference_mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Warp a nearby frame into the target ROI so moving backgrounds can still be reused."""
         ref_gray = cv2.cvtColor(reference_roi, cv2.COLOR_BGR2GRAY)
         height, width = target_gray.shape[:2]
         scale = min(1.0, max(0.2, float(self.config.flow_scale)))
@@ -227,6 +234,8 @@ class HybridTemporalInpainter:
             if coverage < 0.002:
                 break
             if coverage > self.config.cleanup_max_coverage:
+                # Abort cleanup when the detected residual area is too large; at that point the
+                # "residual" is likely real scene content rather than leftover subtitle strokes.
                 break
 
             cleanup_mask = cv2.dilate(
@@ -246,6 +255,7 @@ class HybridTemporalInpainter:
         return cleaned
 
     def _expand_roi(self, bbox: tuple[int, int, int, int], frame_shape: tuple[int, int, int]) -> tuple[int, int, int, int]:
+        """Grow the subtitle box so inpainting sees enough surrounding context."""
         x1, y1, x2, y2 = bbox
         height, width = frame_shape[:2]
         margin = self.config.context_margin

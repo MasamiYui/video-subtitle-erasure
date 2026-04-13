@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class PipelineConfig:
+    """End-to-end knobs for detection, mask generation, and subtitle removal."""
     subtitle_ocr_project: str | None = None
     sample_interval: float = 0.25
     language: str = "ch"
@@ -54,6 +55,8 @@ class PipelineConfig:
 
 class FFmpegPipeWriter:
     def __init__(self, output_path: str, width: int, height: int, fps: float):
+        # Frames are streamed into ffmpeg over stdin so we do not need to buffer an
+        # intermediate uncompressed video on disk.
         self.output_path = output_path
         self.process = subprocess.Popen(
             [
@@ -121,6 +124,7 @@ class FrameReader:
 
 
 def _merge_segments(detection: DetectionResult, config: PipelineConfig) -> list[ProcessingSegment]:
+    """Group nearby subtitle events so temporal context can be processed in batches."""
     events = sorted(detection.events, key=lambda item: (item.start_frame, item.end_frame))
     if not events:
         return []
@@ -144,6 +148,8 @@ def _merge_segments(detection: DetectionResult, config: PipelineConfig) -> list[
 
 
 def _finalize_segment(events, total_frames: int, context_frames: int) -> ProcessingSegment:
+    # Each segment stores both its target range and the surrounding context frames that may
+    # contribute cleaner pixels for temporal filling.
     start_frame = min(event.start_frame for event in events)
     end_frame = max(event.end_frame for event in events)
     context_start = max(0, start_frame - context_frames)
@@ -198,6 +204,7 @@ def erase_subtitles(
     config: PipelineConfig,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionResult:
+    """Run the full pipeline and return detection metadata for debugging or reuse."""
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
     debug_dir = Path(config.debug_dir) if config.debug_dir else None
@@ -265,6 +272,8 @@ def erase_subtitles(
     try:
         while current_frame < video_info.total_frames:
             if current_segment is None or current_frame < current_segment.start_frame:
+                # Frames outside subtitle segments are copied through unchanged to avoid doing
+                # any unnecessary mask generation or inpainting work.
                 ok, frame = cap.read()
                 if not ok:
                     break
@@ -295,6 +304,7 @@ def erase_subtitles(
                 if current_segment.start_frame <= absolute_frame <= current_segment.end_frame:
                     target_local_indices.append(offset)
 
+            # Stabilize masks before inpainting so temporal fill sees a less noisy subtitle area.
             masks = stabilize_temporal_masks(
                 masks,
                 target_local_indices,
@@ -302,6 +312,8 @@ def erase_subtitles(
             )
             outputs = inpainter.process_segment(context_frames, masks, target_local_indices)
 
+            # Re-seek the main capture to the segment start and write only the processed target
+            # frames; context frames are read only to help reconstruction.
             cap.set(cv2.CAP_PROP_POS_FRAMES, current_segment.start_frame)
             absolute_frame = current_segment.start_frame
             while absolute_frame <= current_segment.end_frame:

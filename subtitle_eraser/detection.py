@@ -13,6 +13,7 @@ from subtitle_eraser.regions import NormalizedRegion, any_region_intersects
 
 
 def _probe_video(video_path: str) -> VideoInfo:
+    """Read video metadata once so OCR timestamps can be mapped back to frame indices."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
@@ -58,6 +59,7 @@ def filter_events_by_regions(
     width: int,
     height: int,
 ) -> list[SubtitleEvent]:
+    """Keep only OCR events that intersect the user-selected ROI."""
     if not regions:
         return events
     return [event for event in events if any_region_intersects(event.box, regions, width, height)]
@@ -70,6 +72,7 @@ def expand_event_windows(
     lead_frames: int,
     trail_frames: int,
 ) -> list[SubtitleEvent]:
+    """Pad each detected subtitle event to reduce missed frames around OCR boundaries."""
     if not events:
         return []
 
@@ -111,6 +114,7 @@ def detect_subtitles(
     prefilter_enabled: bool | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionResult:
+    """Run OCR detection and normalize the result into the local pipeline model."""
     _notify(progress_callback, "detecting", 5, "读取视频信息")
     video_info = _probe_video(video_path)
     service = get_subtitle_service_instance(subtitle_ocr_project)
@@ -132,11 +136,15 @@ def detect_subtitles(
     events: list[SubtitleEvent] = []
     _notify(progress_callback, "detecting", 20, "整理字幕事件")
     for item in result.subtitles:
+        # Prefer polygon geometry when the OCR side provides it, but keep a box fallback
+        # so later stages can still build masks even for coarse detections.
         polygon = _normalize_polygon(item.polygon)
         box = _box_from_polygon(item.polygon) or tuple(int(v) for v in item.box) if item.box else None
         if box is None:
             continue
 
+        # Convert subtitle times into inclusive frame ranges. The extra frame on the tail
+        # compensates for OCR timestamps that end slightly before the subtitle fully disappears.
         start_frame = max(0, int(item.start_time * video_info.fps))
         end_frame = min(video_info.total_frames - 1, int(item.end_time * video_info.fps) + 1)
         events.append(
@@ -153,6 +161,8 @@ def detect_subtitles(
             )
         )
 
+    # Filtering by ROI happens before temporal expansion so manual regions do not "pull in"
+    # nearby detections that never actually intersected the requested subtitle band.
     events = filter_events_by_regions(events, requested_regions, video_info.width, video_info.height)
     events = expand_event_windows(
         events,
@@ -187,6 +197,7 @@ def detect_subtitles(
 
 
 def write_detection_debug(detection_result: DetectionResult, output_path: str | Path) -> None:
+    """Persist normalized detection output so long videos can be rerun without OCR."""
     payload = {
         "video": {
             "fps": detection_result.video_info.fps,
@@ -218,6 +229,7 @@ def write_detection_debug(detection_result: DetectionResult, output_path: str | 
 
 
 def load_detection_debug(input_path: str | Path) -> DetectionResult:
+    """Reload a previous detection run using the same in-memory model as fresh OCR."""
     payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
     video_payload = payload["video"]
     video_info = VideoInfo(
