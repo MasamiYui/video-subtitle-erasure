@@ -38,6 +38,8 @@ def feather_mask(mask: np.ndarray, blur_size: int) -> np.ndarray:
 
 
 def extract_text_mask(roi: np.ndarray) -> np.ndarray:
+    # Hard subtitles are usually bright glyphs with thin dark outlines. Start from bright
+    # cores, then link nearby edges so outline pixels are also included in the mask.
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     p90 = float(np.percentile(gray, 90))
     bright_threshold = int(min(245, max(150, round(p90))))
@@ -48,6 +50,8 @@ def extract_text_mask(roi: np.ndarray) -> np.ndarray:
     mask = white_core | linked_edges
 
     if mask.mean() < 0.001:
+        # Some subtitle styles are dim or anti-aliased enough that the bright-core heuristic
+        # misses them entirely, so fall back to a local adaptive threshold.
         adaptive = cv2.adaptiveThreshold(
             gray,
             255,
@@ -84,6 +88,8 @@ def _merge_full_region_mask(
         related_events = [event for event in events if boxes_intersect(event.box, region_box)]
 
         if related_events:
+            # When OCR found subtitle boxes inside a manual ROI, tighten the search area around
+            # their union instead of processing the full band every frame.
             union_box = (
                 min(event.box[0] for event in related_events),
                 min(event.box[1] for event in related_events),
@@ -102,6 +108,8 @@ def _merge_full_region_mask(
         if coverage < 0.001:
             continue
         if coverage > 0.16 and related_events:
+            # Very high coverage usually means the ROI includes too much non-text content.
+            # In that case keep the OCR-driven mask instead of flooding the whole region.
             continue
         local_mask = cv2.dilate(
             local_mask,
@@ -121,6 +129,8 @@ def build_frame_mask(
 ) -> np.ndarray:
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     if mode == "manual-fixed" and requested_regions:
+        # In fully manual mode the selected bands are always treated as candidate subtitle
+        # regions, even if OCR temporarily misses a line.
         _merge_full_region_mask(frame, mask, requested_regions, events, pad_x=pad_x, pad_y=pad_y)
 
     for event in events:
@@ -129,6 +139,8 @@ def build_frame_mask(
         geometry_mask = None
 
         if event.polygon and len(event.polygon) >= 3:
+            # A polygon from OCR is usually tighter than the axis-aligned box, so crop the
+            # local text mask to that geometry when it is available.
             full_poly_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
             poly = np.array(event.polygon, dtype=np.int32)
             cv2.fillPoly(full_poly_mask, [poly], 255)
@@ -149,13 +161,19 @@ def build_frame_mask(
         if geometry_mask is not None:
             local_mask = cv2.bitwise_and(local_mask, geometry_mask)
             if coverage < 0.001 or coverage > 0.65:
+                # If the heuristic mask is either empty or unrealistically dense, trust the
+                # OCR polygon instead of the pixel-based extraction.
                 local_mask = geometry_mask
         elif coverage < 0.001 or coverage > 0.65:
+            # With only a bounding box available, falling back to the full box is safer than
+            # leaving behind subtitle fragments.
             local_mask[:] = 255
 
         mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], local_mask)
 
     if mode == "semi-auto" and requested_regions:
+        # Semi-auto keeps OCR as the primary signal, then uses the manual regions as a
+        # conservative backstop to catch weak detections.
         _merge_full_region_mask(
             frame,
             mask,
@@ -189,6 +207,8 @@ def stabilize_temporal_masks(
     )
 
     for idx in active_indices:
+        # Propagate nearby masks into the current frame to reduce subtitle edge flicker when
+        # OCR timing is slightly early/late or the glyph strokes change across frames.
         merged = masks[idx].copy()
         for delta in range(1, radius + 1):
             for neighbor_idx in (idx - delta, idx + delta):
