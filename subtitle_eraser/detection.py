@@ -6,7 +6,7 @@ from pathlib import Path
 
 import cv2
 
-from subtitle_eraser.bridge import load_subtitle_service
+from subtitle_eraser.bridge import get_subtitle_service_instance
 from subtitle_eraser.models import DetectionResult, SubtitleEvent, VideoInfo
 from subtitle_eraser.progress import ProgressCallback
 from subtitle_eraser.regions import NormalizedRegion, any_region_intersects
@@ -105,12 +105,15 @@ def detect_subtitles(
     mode: str = "auto",
     event_lead_frames: int = 2,
     event_trail_frames: int = 8,
+    merge_threshold: float = 0.78,
+    ocr_det_db_thresh: float | None = None,
+    ocr_det_db_box_thresh: float | None = None,
+    prefilter_enabled: bool | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> DetectionResult:
     _notify(progress_callback, "detecting", 5, "读取视频信息")
     video_info = _probe_video(video_path)
-    SubtitleService = load_subtitle_service(subtitle_ocr_project)
-    service = SubtitleService()
+    service = get_subtitle_service_instance(subtitle_ocr_project)
     _notify(progress_callback, "detecting", 12, "运行字幕定位")
     result = service.extract_subtitles(
         video_path=video_path,
@@ -120,7 +123,10 @@ def detect_subtitles(
         roi_bottom_ratio=roi_bottom_ratio,
         subtitle_position_mode=position_mode,
         subtitle_geometry_mode="axis_aligned",
-        merge_threshold=0.78,
+        merge_threshold=merge_threshold,
+        det_db_thresh=ocr_det_db_thresh,
+        det_db_box_thresh=ocr_det_db_box_thresh,
+        prefilter_enabled=prefilter_enabled,
     )
 
     events: list[SubtitleEvent] = []
@@ -209,3 +215,37 @@ def write_detection_debug(detection_result: DetectionResult, output_path: str | 
         "anchor_debug": detection_result.anchor_debug,
     }
     Path(output_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def load_detection_debug(input_path: str | Path) -> DetectionResult:
+    payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    video_payload = payload["video"]
+    video_info = VideoInfo(
+        fps=float(video_payload["fps"]),
+        total_frames=int(video_payload["total_frames"]),
+        width=int(video_payload["width"]),
+        height=int(video_payload["height"]),
+        duration=float(video_payload["duration"]),
+    )
+    events = [
+        SubtitleEvent(
+            index=int(item["index"]),
+            start_time=float(item["start_time"]),
+            end_time=float(item["end_time"]),
+            start_frame=int(item["start_frame"]),
+            end_frame=int(item["end_frame"]),
+            text=str(item.get("text", "")),
+            confidence=float(item.get("confidence", 0.0)),
+            box=tuple(int(v) for v in item["box"]),
+            polygon=[(int(x), int(y)) for x, y in item["polygon"]] if item.get("polygon") else None,
+        )
+        for item in payload.get("events", [])
+    ]
+    return DetectionResult(
+        video_info=video_info,
+        events=events,
+        anchors=list(payload.get("anchors", [])),
+        anchor_debug=payload.get("anchor_debug"),
+        requested_regions=payload.get("requested_regions"),
+        mode=str(payload.get("mode", "auto")),
+    )

@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from subtitle_eraser.detection import detect_subtitles, write_detection_debug
 from subtitle_eraser.inpaint import HybridTemporalInpainter, InpaintConfig
-from subtitle_eraser.masking import build_frame_mask
+from subtitle_eraser.masking import build_frame_mask, stabilize_temporal_masks
 from subtitle_eraser.models import DetectionResult, ProcessingSegment
 from subtitle_eraser.progress import ProgressCallback
 from subtitle_eraser.regions import NormalizedRegion
@@ -31,11 +31,25 @@ class PipelineConfig:
     requested_regions: list[NormalizedRegion] | None = None
     mask_dilate_x: int = 14
     mask_dilate_y: int = 10
+    mask_temporal_radius: int = 0
     segment_gap_frames: int = 3
     context_frames: int = 12
     event_lead_frames: int = 2
     event_trail_frames: int = 8
+    residual_cleanup_passes: int = 0
+    inpaint_backend: str = "telea"
+    inpaint_radius: int = 3
+    inpaint_context_margin: int = 80
+    max_temporal_references: int = 6
+    temporal_min_consensus: int = 2
+    temporal_max_std: float = 14.0
+    cleanup_max_coverage: float = 0.045
+    merge_threshold: float = 0.78
+    ocr_det_db_thresh: float | None = None
+    ocr_det_db_box_thresh: float | None = None
+    prefilter_enabled: bool | None = None
     debug_dir: str | None = None
+    reuse_detection_path: str | None = None
 
 
 class FFmpegPipeWriter:
@@ -192,19 +206,29 @@ def erase_subtitles(
 
     logger.info("detecting subtitles")
     _notify(progress_callback, "detecting", 2, "开始分析字幕")
-    detection = detect_subtitles(
-        video_path=input_path,
-        subtitle_ocr_project=config.subtitle_ocr_project,
-        sample_interval=config.sample_interval,
-        language=config.language,
-        mode=config.mode,
-        position_mode=config.position_mode,
-        roi_bottom_ratio=config.roi_bottom_ratio,
-        requested_regions=config.requested_regions,
-        event_lead_frames=config.event_lead_frames,
-        event_trail_frames=config.event_trail_frames,
-        progress_callback=progress_callback,
-    )
+    if config.reuse_detection_path:
+        from subtitle_eraser.detection import load_detection_debug
+
+        detection = load_detection_debug(config.reuse_detection_path)
+        _notify(progress_callback, "detecting", 24, f"复用历史检测结果，共 {len(detection.events)} 段字幕")
+    else:
+        detection = detect_subtitles(
+            video_path=input_path,
+            subtitle_ocr_project=config.subtitle_ocr_project,
+            sample_interval=config.sample_interval,
+            language=config.language,
+            mode=config.mode,
+            position_mode=config.position_mode,
+            roi_bottom_ratio=config.roi_bottom_ratio,
+            requested_regions=config.requested_regions,
+            event_lead_frames=config.event_lead_frames,
+            event_trail_frames=config.event_trail_frames,
+            merge_threshold=config.merge_threshold,
+            ocr_det_db_thresh=config.ocr_det_db_thresh,
+            ocr_det_db_box_thresh=config.ocr_det_db_box_thresh,
+            prefilter_enabled=config.prefilter_enabled,
+            progress_callback=progress_callback,
+        )
     _notify(progress_callback, "detecting", 24, f"检测完成，共 {len(detection.events)} 段字幕")
 
     if debug_dir:
@@ -215,7 +239,14 @@ def erase_subtitles(
     frame_reader = FrameReader(input_path)
     inpainter = HybridTemporalInpainter(
         InpaintConfig(
-            context_margin=80,
+            backend=config.inpaint_backend,
+            spatial_radius=config.inpaint_radius,
+            context_margin=config.inpaint_context_margin,
+            cleanup_passes=config.residual_cleanup_passes,
+            max_temporal_references=config.max_temporal_references,
+            temporal_min_consensus=config.temporal_min_consensus,
+            temporal_max_std=config.temporal_max_std,
+            cleanup_max_coverage=config.cleanup_max_coverage,
         )
     )
 
@@ -264,6 +295,11 @@ def erase_subtitles(
                 if current_segment.start_frame <= absolute_frame <= current_segment.end_frame:
                     target_local_indices.append(offset)
 
+            masks = stabilize_temporal_masks(
+                masks,
+                target_local_indices,
+                radius=config.mask_temporal_radius,
+            )
             outputs = inpainter.process_segment(context_frames, masks, target_local_indices)
 
             cap.set(cv2.CAP_PROP_POS_FRAMES, current_segment.start_frame)

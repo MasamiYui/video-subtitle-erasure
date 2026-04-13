@@ -37,7 +37,7 @@ def feather_mask(mask: np.ndarray, blur_size: int) -> np.ndarray:
     return np.clip(blurred, 0.0, 1.0)
 
 
-def _adaptive_text_mask(roi: np.ndarray) -> np.ndarray:
+def extract_text_mask(roi: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     p90 = float(np.percentile(gray, 90))
     bright_threshold = int(min(245, max(150, round(p90))))
@@ -97,7 +97,7 @@ def _merge_full_region_mask(
         roi = frame[y1:y2, x1:x2]
         if roi.size == 0:
             continue
-        local_mask = _adaptive_text_mask(roi)
+        local_mask = extract_text_mask(roi)
         coverage = float(local_mask.mean()) / 255.0
         if coverage < 0.001:
             continue
@@ -144,7 +144,7 @@ def build_frame_mask(
         if roi.size == 0:
             continue
 
-        local_mask = _adaptive_text_mask(roi)
+        local_mask = extract_text_mask(roi)
         coverage = float(local_mask.mean()) / 255.0
         if geometry_mask is not None:
             local_mask = cv2.bitwise_and(local_mask, geometry_mask)
@@ -167,3 +167,35 @@ def build_frame_mask(
 
     mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 5)), iterations=1)
     return mask
+
+
+def stabilize_temporal_masks(
+    masks: list[np.ndarray],
+    active_indices: list[int],
+    radius: int = 1,
+) -> list[np.ndarray]:
+    if radius <= 0 or not masks or not active_indices:
+        return masks
+
+    active_set = set(active_indices)
+    stabilized = [mask.copy() for mask in masks]
+    link_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (max(3, radius * 4 + 3), max(3, radius * 2 + 3)),
+    )
+    close_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE,
+        (max(5, radius * 4 + 5), max(3, radius * 2 + 3)),
+    )
+
+    for idx in active_indices:
+        merged = masks[idx].copy()
+        for delta in range(1, radius + 1):
+            for neighbor_idx in (idx - delta, idx + delta):
+                if neighbor_idx not in active_set:
+                    continue
+                propagated = cv2.dilate(masks[neighbor_idx], link_kernel, iterations=1)
+                merged = np.maximum(merged, propagated)
+        merged = cv2.morphologyEx(merged, cv2.MORPH_CLOSE, close_kernel)
+        stabilized[idx] = merged
+    return stabilized

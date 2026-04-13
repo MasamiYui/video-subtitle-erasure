@@ -3,7 +3,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from subtitle_eraser.masking import build_frame_mask
+from subtitle_eraser.masking import build_frame_mask, stabilize_temporal_masks
 from subtitle_eraser.models import SubtitleEvent
 
 
@@ -43,3 +43,14 @@ def test_event_box_builds_mask_in_auto_mode() -> None:
 
     assert int(mask.sum()) > 0
     assert int(mask[160:220, 70:300].sum()) > 0
+
+
+def test_temporal_mask_stabilization_propagates_neighbors() -> None:
+    masks = [np.zeros((40, 80), dtype=np.uint8) for _ in range(3)]
+    cv2.rectangle(masks[0], (12, 20), (26, 28), 255, -1)
+    cv2.rectangle(masks[2], (14, 20), (28, 28), 255, -1)
+
+    stabilized = stabilize_temporal_masks(masks, [0, 1, 2], radius=1)
+
+    assert int(stabilized[1].sum()) > 0
+    assert int(stabilized[1][19:30, 10:30].sum()) > 0

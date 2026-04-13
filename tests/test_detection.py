@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from subtitle_eraser.detection import expand_event_windows, filter_events_by_regions
 from subtitle_eraser.models import SubtitleEvent
 
@@ -43,3 +45,26 @@ def test_filter_events_by_regions_keeps_only_intersections() -> None:
     )
     assert len(kept) == 1
     assert removed == []
+
+
+def test_load_detection_debug_roundtrip(tmp_path: Path) -> None:
+    from subtitle_eraser.detection import load_detection_debug, write_detection_debug
+    from subtitle_eraser.models import DetectionResult, VideoInfo
+
+    event = make_event()
+    detection = DetectionResult(
+        video_info=VideoInfo(fps=25.0, total_frames=200, width=960, height=416, duration=8.0),
+        events=[event],
+        anchors=[{"center_x": 0.5}],
+        anchor_debug={"ok": True},
+        requested_regions=[(0.1, 0.7, 0.9, 0.95)],
+        mode="manual-fixed",
+    )
+    output_path = tmp_path / "detection.json"
+    write_detection_debug(detection, output_path)
+
+    loaded = load_detection_debug(output_path)
+
+    assert loaded.video_info.width == 960
+    assert loaded.mode == "manual-fixed"
+    assert loaded.events[0].box == event.box
